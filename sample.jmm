@@ -1,0 +1,10 @@
+// کد تصحیح شده برای ورودی
+class A {
+  public static void main(String[] args) {
+    int x = 1_000 + 2;
+    String s = "he\"llo";
+    if (x >= 1000 && s != null) {
+        print(a.length);
+    }
+  }
+}
