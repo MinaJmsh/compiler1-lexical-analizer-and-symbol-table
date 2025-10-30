@@ -56,23 +56,45 @@ public class SymbolTableBuilder extends javaMinusMinus2BaseListener {
 
     @Override
     public void enterMainClass(javaMinusMinus2Parser.MainClassContext ctx) {
-        // Identifier() در MainClassContext یک لیست برمی‌گرداند.
+        // 1. ثبت کلاس در اسکوپ Global
         String className = ctx.Identifier().get(0).getText(); 
-        enterScope("Class_" + className);
-        
         SymbolAttributes classAttr = new SymbolAttributes(Kind.CLASS, "public", false, null, Collections.emptyList());
         globalScope.insert(className, classAttr); 
+        
+        // 2. ورود به اسکوپ کلاس
+        enterScope("Class_" + className);
+        
+        // 3. ثبت متد main در اسکوپ کلاس (currentScope = Class scope)
+        String methodName = "main";
+        String returnType = "void"; 
+        String access = "public static"; // متد main public static است.
+
+        // پارامتر String[] args را استخراج می کنیم.
+        Map<String, String> params = new LinkedHashMap<>();
+        // فرض می‌کنیم در MainClassContext، آرگومان‌ها همیشه String[] args باشند.
+        params.put("args", "String[]"); 
+
+        SymbolAttributes methodAttr = new SymbolAttributes(Kind.METHOD, methodName, returnType, access, params, false, false);
+        currentScope.insert(methodName, methodAttr);
+        
+        // 4. ورود به اسکوپ متد main
+        enterScope("Method_" + methodName);
+        
+        // 5. ثبت پارامتر args در اسکوپ متد
+        // چون enterMainClassContext شامل پارامترها نیست، باید دستی اینجا ثبت شود.
+        SymbolAttributes paramAttr = new SymbolAttributes(Kind.PARAMETER, "String[]", "Method"); // متغیر محلی/پارامتر سطح دسترسی ندارد.
+        currentScope.insert("args", paramAttr);
     }
 
     @Override
     public void exitMainClass(javaMinusMinus2Parser.MainClassContext ctx) {
-        exitScope(); 
-        exitScope(); 
+        exitScope(); // خروج از اسکوپ متد (main)
+        exitScope(); // خروج از اسکوپ کلاس (Class_A)
+        // این دو exitScope برای مطابقت با دو enterScope در enterMainClass نیاز است.
     }
 
     @Override
     public void enterClassDecl(javaMinusMinus2Parser.ClassDeclContext ctx) {
-        // Identifier() در ClassDeclContext یک لیست برمی‌گرداند.
         String className = ctx.Identifier().get(0).getText();
         
         enterScope("Class_" + className);
@@ -85,7 +107,7 @@ public class SymbolTableBuilder extends javaMinusMinus2BaseListener {
             // منطق استخراج
         }
         
-        String access = getAccessModifier(null); 
+        String access = getAccessModifier(null); // فرض کنیم اگر دسترسی مشخص نشده، internal است.
 
         SymbolAttributes classAttr = new SymbolAttributes(Kind.CLASS, access, isAbstract, parentName, interfaces);
         globalScope.insert(className, classAttr); 
@@ -98,7 +120,6 @@ public class SymbolTableBuilder extends javaMinusMinus2BaseListener {
     
     @Override
     public void enterInterfaceDecl(javaMinusMinus2Parser.InterfaceDeclContext ctx) {
-        // Identifier() در InterfaceDeclContext یک لیست برمی‌گرداند.
         String interfaceName = ctx.Identifier().getText();
         enterScope("Interface_" + interfaceName);
         
@@ -113,19 +134,24 @@ public class SymbolTableBuilder extends javaMinusMinus2BaseListener {
 
     @Override
     public void enterMethodDecl(javaMinusMinus2Parser.MethodDeclContext ctx) {
-        // اصلاح نهایی: Identifier() در MethodDeclContext یک TerminalNode برمی‌گرداند.
         String methodName = ctx.Identifier().getText();
-        enterScope("Method_" + methodName);
-
-        boolean isOverride = isLiteralPresent(ctx, "@Override");
         
+        // 1. ثبت متد در اسکوپ والد (اسکوپ کلاس)
         String returnType = ctx.type() != null ? getType(ctx.type()) : "void";
         String access = getAccessModifier(ctx.accessModifier());
-        
+        boolean isAbstract = isLiteralPresent(ctx, "abstract");
+        boolean isOverride = isLiteralPresent(ctx, "@Override");
+
         Map<String, String> params = extractParameters(ctx.parameterList());
 
-        SymbolAttributes methodAttr = new SymbolAttributes(methodName, returnType, access, params, false, isOverride);
-        currentScope.getParent().insert(methodName, methodAttr);
+        SymbolAttributes methodAttr = new SymbolAttributes(Kind.METHOD, methodName, returnType, access, params, isAbstract, isOverride);
+        currentScope.insert(methodName, methodAttr); // currentScope در اینجا اسکوپ کلاس است.
+        
+        // 2. ورود به اسکوپ متد
+        enterScope("Method_" + methodName);
+        
+        // 3. ثبت پارامترها (جداگانه از متد extractParameters)
+        // ANTLR Listener به‌طور خودکار به enter/exitParameter می‌رود، پس ثبت پارامترها را در آنجا انجام می‌دهیم.
     }
 
     @Override
@@ -135,17 +161,19 @@ public class SymbolTableBuilder extends javaMinusMinus2BaseListener {
     
     @Override
     public void enterCtorDecl(javaMinusMinus2Parser.CtorDeclContext ctx) {
-        // Identifier() در CtorDeclContext یک TerminalNode برمی‌گرداند.
         String ctorName = ctx.Identifier().getText();
-        enterScope("Method_" + ctorName + "_CTOR");
         
-        boolean isOverride = isLiteralPresent(ctx, "@Override");
-
+        // 1. ثبت سازنده در اسکوپ والد (اسکوپ کلاس)
         String access = getAccessModifier(ctx.accessModifier());
         Map<String, String> params = extractParameters(ctx.parameterList());
+        
+        SymbolAttributes ctorAttr = new SymbolAttributes(Kind.CONSTRUCTOR, ctorName, ctorName, access, params, false, false); // نوع بازگشتی هم نام کلاس است
+        currentScope.insert(ctorName, ctorAttr);
 
-        SymbolAttributes ctorAttr = new SymbolAttributes("CTOR", ctorName, access, params, false, isOverride);
-        currentScope.getParent().insert(ctorName, ctorAttr);
+        // 2. ورود به اسکوپ سازنده
+        enterScope("Constructor_" + ctorName);
+        
+        // ثبت پارامترها توسط exitParameter انجام می‌شود.
     }
 
     @Override
@@ -171,7 +199,8 @@ public class SymbolTableBuilder extends javaMinusMinus2BaseListener {
         String paramName = ctx.Identifier().getText();
         String paramType = getType(ctx.type());
         
-        SymbolAttributes paramAttr = new SymbolAttributes(Kind.PARAMETER, paramType, "private", "Method");
+        // اصلاح: حذف سطح دسترسی (پارامترها و متغیرهای محلی سطح دسترسی ندارند)
+        SymbolAttributes paramAttr = new SymbolAttributes(Kind.PARAMETER, paramType, "Method"); 
         currentScope.insert(paramName, paramAttr);
     }
     
@@ -190,7 +219,10 @@ public class SymbolTableBuilder extends javaMinusMinus2BaseListener {
         String varName = ctx.Identifier().getText();
         String varType = getType(ctx.type());
         
-        SymbolAttributes varAttr = new SymbolAttributes(Kind.VARIABLE, varType, "private", currentScope.getScopeName().startsWith("Block") ? "Block" : "Method");
+        // اصلاح: حذف سطح دسترسی (متغیرهای محلی سطح دسترسی ندارند)
+        // نوع اسکوپ: اگر Block باشد Block وگرنه Method (اگر در متد اما بیرون از Block باشد)
+        String scopeType = currentScope.getScopeName().startsWith("Block") ? "Block" : "Method";
+        SymbolAttributes varAttr = new SymbolAttributes(Kind.VARIABLE, varType, scopeType); 
         currentScope.insert(varName, varAttr);
     }
 
